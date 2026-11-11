@@ -11,7 +11,7 @@
 //   -> 1K / 10n -> 0.1u (100K to the bias trim) -> SAD1024 section A (pin 2)
 //   -> outputs 5/6 -> 0.1u -> section B (pin 15): both 512-stage sections
 //      in series, 1024 stages
-//   -> outputs 11/12 balanced by the 22K trim -> 0.1u -> 30K
+//   -> outputs 11/12 joined into the 22K LEVEL trim, wiper -> 0.1u -> 30K
 //   -> 4558 multiple-feedback low-pass (30K, 5K1, 6n8, 150p; gain -1)
 //   -> 4558 Sallen-Key low-pass (7K5, 2K4, 6n8, 3n3)          = node W
 //   NE5532 mixer (pins 1-3, inverting): A through 150K, W through 82K,
@@ -61,6 +61,10 @@ public:
     void setSpeed (double v);           // SWEEP 500K log: LFO rate
     void setRegen (double v);           // 50K lin: feedback
     void setEffectOn (bool on);         // footswitch: effect in / bypass
+    // PCB trimpots (0..1 rotation)
+    void setBiasTrim (double v);        // 5K: SAD1024 bias, headroom and clipping
+    void setLevelTrim (double v);       // 22K: wet level out of the SAD1024
+    void setClockTrim (double v);       // 500K: clock offset current, delay range
     // Plugin only
     void setInputGainDb (double dB);
     void setOutputGainDb (double dB);
@@ -74,7 +78,10 @@ public:
     static double lfoHz (double speedPot);
     static double manualVolts (double manualPot);
     // Delay for a pot setting and an LFO voltage (lfo -1..1 across its swing)
-    static double delayMs (double manualPot, double widthPot, double lfo);
+    static double delayMs (double manualPot, double widthPot, double lfo, double clockTrim = 0.5);
+    // Small-signal gain round the REGEN loop in the mid band (1 = the edge
+    // of self-oscillation)
+    static double regenLoopGain (double regenPot, double levelTrim);
     double currentDelayMs() const { return 1000.0 * lastDelay; }
     double currentClockHz() const;      // the SAD1024 clock
     double lfoValue() const { return lfoTri; }                   // -1..1
@@ -88,16 +95,17 @@ public:
 private:
     double tickOs (double x);
     void   updateRegenFilter();
+    void   updateLevelTrim();
     double limiter (double i) const;
 
     double fsBase, fsOs;
     Oversampler4x up, down;
 
     // Targets and smoothed values
-    double manT, widT, spdT, regT, effectT, inT, outT;
-    double man, wid, spd, reg, effect, inG, outG;
+    double manT, widT, spdT, regT, effectT, inT, outT, biasT, levelT, clockT;
+    double man, wid, spd, reg, effect, inG, outG, bias, level, clock;
     double smKnob, smRate, smSwitch;
-    double regenSet;
+    double regenSet, levelSet;
 
     // Audio path
     FirstOrder inHp;            // 0.1u into the 470K bias

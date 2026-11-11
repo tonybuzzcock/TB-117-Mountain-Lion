@@ -26,11 +26,12 @@ namespace
     const double kIs = 2.52e-9, kNVt = 1.752 * 0.02585;      // 1N4148
     // 1K / 10n, then 0.1u into 100K at the BBD inputs
     const double kRrc = 1.0e3, kCrc = 10.0e-9, kCbbd = 0.1e-6, kRbbd = 100.0e3;
-    // Output trim 22K (centred: 5K5 source), 0.1u into the 30K
-    const double kRtrim = 22.0e3 * 0.25, kCout = 0.1e-6;
-    // Multiple-feedback low-pass: R1 30K in, R2 30K to the output, R3 5K1 to
-    // pin 2, C1 6n8 to ground, C2 150p across the op-amp
-    const double kMfbR1 = 30.0e3 + kRtrim, kMfbR2 = 30.0e3, kMfbR3 = 5.1e3;
+    // LEVEL trim 22K from the joined outputs to ground, wiper -> 0.1u -> 30K
+    const double kLevelPot = 22.0e3, kCout = 0.1e-6;
+    // Multiple-feedback low-pass: R1 30K in (plus the trim's source
+    // resistance), R2 30K to the output, R3 5K1 to pin 2, C1 6n8 to ground,
+    // C2 150p across the op-amp
+    const double kMfbRin = 30.0e3, kMfbR2 = 30.0e3, kMfbR3 = 5.1e3;
     const double kMfbC1 = 6.8e-9, kMfbC2 = 150.0e-12;
     // Sallen-Key: 7K5, 2K4, 6n8 to the output, 3n3 to ground
     const double kSkR1 = 7.5e3, kSkR2 = 2.4e3, kSkC1 = 6.8e-9, kSkC2 = 3.3e-9;
@@ -54,16 +55,29 @@ namespace
     // is taken as the integrator's usable range on the 15 V supply.
     const double kLfoLow = 1.8, kLfoHigh = 11.4;
     const double kLfoDrive = 6.0;              // volts across the rate resistor
-    // Clock trim (500K / 470K, centred): extra current into the mirror
-    const double kItrim = 15.0e-6;
+    // CLOCK trim: 500K across the supply, wiper -> 470K into the mirror
+    const double kClkPot = 500.0e3, kRclk = 470.0e3;
+    inline double trimCurrent (double c)
+    {
+        const double v = kVcc * c - kVbe;
+        return v > 0.0 ? v / (kRclk + c * (1.0 - c) * kClkPot) : 0.0;
+    }
     // Clock: delay = kDelayAmps / current (62p ramp, latch threshold, /2 in the
-    // 4013), set so MANUAL fully clockwise with WIDTH at 0 gives 0.5 ms.
-    const double kDelayAmps = 0.5e-3 * ((kBufHigh - kVbe) / kRcv + kItrim);
+    // 4013), set so MANUAL fully clockwise with WIDTH at 0 gives 0.5 ms with
+    // the CLOCK trim centred.
+    const double kDelayAmps = 0.5e-3 * ((kBufHigh - kVbe) / kRcv + 6.88 / (kRclk + 0.25 * kClkPot));
     const double kMinDelay = 512.0 / 1.5e6;     // SAD1024 clock limit, 1.5 MHz
     const double kMaxDelay = 25.0e-3;
-    // SAD1024: gain through both sections, output resistance, clipping
-    const double kBbdGain = 0.8;
-    const double kBbdClip = 2.0;               // V peak at the input
+    // SAD1024: signal gain from pin 2 to the joined outputs 11/12, and the
+    // clipping level. The drawing's resistors alone keep the REGEN loop well
+    // below 1, yet real M117s scream and self-oscillate near the top of
+    // REGEN; the gain is set so that, with the LEVEL trim at its default,
+    // REGEN gets wild from about 3 o'clock and breaks into oscillation
+    // around 4 o'clock (as on the user's pedal). LEVEL then tames it or
+    // makes it wilder.
+    const double kBbdGain = 2.1;
+    const double kBbdClip = 2.0;               // V peak at the input, BIAS centred
+    const double kBiasSpan = 2.0;              // V of bias shift either side across the BIAS trim
 
     inline double audioTaper (double x)
     {
@@ -98,11 +112,12 @@ namespace
     const double kTableMaxI = 300.0e-6;        // summing-node current covered by the table
 
     // Clock current for a WIDTH wiper voltage and source resistance
-    inline double clockDelay (double vth, double rth)
+    inline double clockDelay (double vth, double rth, double itrim)
     {
         double i = (vth - kVbe) / (rth + kRcv);
         if (i < 0.0) i = 0.0;
-        i += kItrim;
+        i += itrim;
+        if (i < 1.0e-6) i = 1.0e-6;
         double d = kDelayAmps / i;
         if (d < kMinDelay) d = kMinDelay;
         if (d > kMaxDelay) d = kMaxDelay;
@@ -128,12 +143,20 @@ double Flanger::manualVolts (double pot)
     return v;
 }
 
-double Flanger::delayMs (double manualPot, double widthPot, double lfo)
+double Flanger::delayMs (double manualPot, double widthPot, double lfo, double clockTrim)
 {
     const double w = clamp01 (widthPot);
     const double vm = manualVolts (manualPot);
     const double vl = kLfoLow + (kLfoHigh - kLfoLow) * 0.5 * (lfo + 1.0);
-    return 1000.0 * clockDelay (vm + w * (vl - vm), w * (1.0 - w) * kWidPot);
+    return 1000.0 * clockDelay (vm + w * (vl - vm), w * (1.0 - w) * kWidPot, trimCurrent (clamp01 (clockTrim)));
+}
+
+double Flanger::regenLoopGain (double regenPot, double levelTrim)
+{
+    const double x = clamp01 (regenPot), t = clamp01 (levelTrim);
+    const double drv = kRfDrv / (kRregIn + x * (1.0 - x) * kRegPot);           // wiper -> driver
+    const double mfbGain = kMfbR2 / (kMfbRin + t * (1.0 - t) * kLevelPot);    // LEVEL wiper -> MFB
+    return x * drv * kBbdGain * t * mfbGain;                                    // Sallen-Key: x1
 }
 
 double Flanger::currentClockHz() const
@@ -147,9 +170,10 @@ double Flanger::wetFilterDb (double hz)
 {
     // |H(jw)| of both low-pass sections from their component values
     const double w = 2.0 * kPi * hz;
-    const double g = kMfbR2 / kMfbR1;
+    const double rin = kMfbRin + 0.75 * 0.25 * kLevelPot;    // LEVEL trim at its default
+    const double g = kMfbR2 / rin;
     const double r1 = 1.0 - w * w * kMfbC1 * kMfbC2 * kMfbR2 * kMfbR3;
-    const double i1 = w * kMfbC2 * (kMfbR2 + kMfbR3 + kMfbR2 * kMfbR3 / kMfbR1);
+    const double i1 = w * kMfbC2 * (kMfbR2 + kMfbR3 + kMfbR2 * kMfbR3 / rin);
     const double r2 = 1.0 - w * w * kSkR1 * kSkR2 * kSkC1 * kSkC2;
     const double i2 = w * kSkC2 * (kSkR1 + kSkR2);
     const double m = g / std::sqrt ((r1 * r1 + i1 * i1) * (r2 * r2 + i2 * i2));
@@ -160,7 +184,8 @@ double Flanger::wetFilterDb (double hz)
 Flanger::Flanger()
     : fsBase (44100.0), fsOs (176400.0),
       manT (0.5), widT (0.5), spdT (0.5), regT (0.5), effectT (1.0), inT (1.0), outT (1.0),
-      regenSet (-1.0), tableStep (1.0), tableSlopeOut (0.0),
+      biasT (0.5), levelT (0.75), clockT (0.5),
+      regenSet (-1.0), levelSet (-1.0), tableStep (1.0), tableSlopeOut (0.0),
       ringPos (0), tickPhase (0.0), bbdHeld (0.0), lastBbdIn (0.0), wetNode (0.0),
       lfoPhase (0.25), lfoTri (0.0), lastDelay (1.0e-3), peakBbdLevel (0.0)
 {
@@ -217,12 +242,9 @@ void Flanger::prepare (double sampleRate)
     }
     bbdHp.highpass (highpassFc (kRbbd, kCbbd), fsOs);
     midHp.highpass (highpassFc (kRbbd, kCbbd), fsOs);
-    outCouple.highpass (highpassFc (kMfbR1, kCout), fsOs);
-
-    // MFB: -(R2/R1) / (s^2 C1 C2 R2 R3 + s C2 (R2 + R3 + R2 R3 / R1) + 1)
-    mfb.setAnalog (0.0, 0.0, -kMfbR2 / kMfbR1,
-                   kMfbC1 * kMfbC2 * kMfbR2 * kMfbR3,
-                   kMfbC2 * (kMfbR2 + kMfbR3 + kMfbR2 * kMfbR3 / kMfbR1), 1.0, fsOs);
+    levelSet = -1.0;
+    level = levelT;
+    updateLevelTrim();
     // Sallen-Key: 1 / (s^2 R1 R2 C1 C2 + s C2 (R1 + R2) + 1)
     sk.setAnalog (0.0, 0.0, 1.0, kSkR1 * kSkR2 * kSkC1 * kSkC2, kSkC2 * (kSkR1 + kSkR2), 1.0, fsOs);
 
@@ -240,6 +262,19 @@ void Flanger::prepare (double sampleRate)
     reset();
 }
 
+void Flanger::updateLevelTrim()
+{
+    if (std::fabs (level - levelSet) < 1.0e-4) return;
+    levelSet = level;
+    // The trim's wiper is the MFB's source: R1 = 30K + t (1 - t) 22K
+    const double r1 = kMfbRin + level * (1.0 - level) * kLevelPot;
+    outCouple.highpass (highpassFc (r1, kCout), fsOs);
+    // MFB: -(R2/R1) / (s^2 C1 C2 R2 R3 + s C2 (R2 + R3 + R2 R3 / R1) + 1)
+    mfb.setAnalog (0.0, 0.0, -kMfbR2 / r1,
+                   kMfbC1 * kMfbC2 * kMfbR2 * kMfbR3,
+                   kMfbC2 * (kMfbR2 + kMfbR3 + kMfbR2 * kMfbR3 / r1), 1.0, fsOs);
+}
+
 void Flanger::updateRegenFilter()
 {
     if (std::fabs (reg - regenSet) < 1.0e-4) return;
@@ -253,8 +288,11 @@ void Flanger::updateRegenFilter()
 void Flanger::reset()
 {
     man = manT; wid = widT; spd = spdT; reg = regT; effect = effectT; inG = inT; outG = outT;
+    bias = biasT; level = levelT; clock = clockT;
     regenSet = -1.0;
     updateRegenFilter();
+    levelSet = -1.0;
+    updateLevelTrim();
 
     up.reset(); down.reset();
     inHp.reset(); preEmph.reset(); drvLp.reset(); rcLp.reset(); bbdHp.reset(); midHp.reset();
@@ -266,7 +304,7 @@ void Flanger::reset()
     ringPos = 0;
     tickPhase = 0.0; bbdHeld = 0.0; lastBbdIn = 0.0; wetNode = 0.0;
     lfoPhase = 0.25; lfoTri = 0.0;
-    lastDelay = delayMs (man, wid, 0.0) * 1.0e-3;
+    lastDelay = delayMs (man, wid, 0.0, clock) * 1.0e-3;
     peakBbdLevel = 0.0;
 }
 
@@ -274,6 +312,9 @@ void Flanger::setManual (double v)         { manT = clamp01 (v); }
 void Flanger::setWidth (double v)          { widT = clamp01 (v); }
 void Flanger::setSpeed (double v)          { spdT = clamp01 (v); }
 void Flanger::setRegen (double v)          { regT = clamp01 (v); }
+void Flanger::setBiasTrim (double v)       { biasT = clamp01 (v); }
+void Flanger::setLevelTrim (double v)      { levelT = clamp01 (v); }
+void Flanger::setClockTrim (double v)      { clockT = clamp01 (v); }
 void Flanger::setEffectOn (bool on)        { effectT = on ? 1.0 : 0.0; }
 void Flanger::setInputGainDb (double dB)   { inT = std::pow (10.0, dB / 20.0); }
 void Flanger::setOutputGainDb (double dB)  { outT = std::pow (10.0, dB / 20.0); }
@@ -290,7 +331,7 @@ double Flanger::tickOs (double x)
     {
         const double vm = manualVolts (man);
         const double vl = kLfoLow + (kLfoHigh - kLfoLow) * 0.5 * (lfoTri + 1.0);
-        lastDelay = clockDelay (vm + wid * (vl - vm), wid * (1.0 - wid) * kWidPot);
+        lastDelay = clockDelay (vm + wid * (vl - vm), wid * (1.0 - wid) * kWidPot, trimCurrent (clock));
     }
     const double delay = lastDelay;
 
@@ -303,8 +344,10 @@ double Flanger::tickOs (double x)
     // BBD driver: inverting, diode-limited feedback, 100p across it
     const double drv = slewDrv.tick (railClip (drvLp.tick (-limiter (a / kRdry + iReg)), kRail4558));
 
-    // 1K / 10n, coupling into the SAD1024
-    const double bin = bbdClip (bbdHp.tick (rcLp.tick (drv)));
+    // 1K / 10n, coupling into the SAD1024; the BIAS trim moves the operating
+    // point, so one side clips first (the DC is blocked further on)
+    const double off = (bias - 0.5) * 2.0 * kBiasSpan;
+    const double bin = bbdClip (bbdHp.tick (rcLp.tick (drv)) + off);
     {
         const double lvl = std::fabs (bin) / kBbdClip;
         if (lvl > peakBbdLevel) peakBbdLevel = lvl;
@@ -338,8 +381,8 @@ double Flanger::tickOs (double x)
     if (tickPhase >= 1.0) tickPhase = 0.999999;
     lastBbdIn = bin;
 
-    // Between the sections (0.1u / 100K) and out through the trim
-    const double bout = outCouple.tick (midHp.tick (kBbdGain * acc));
+    // Between the sections (0.1u / 100K) and out through the LEVEL trim
+    const double bout = outCouple.tick (midHp.tick (kBbdGain * level * acc));
 
     // Wet filters: MFB (inverting) then Sallen-Key
     const double m = slewMfb.tick (railClip (mfb.tick (bout), kRail4558));
@@ -368,7 +411,11 @@ void Flanger::process (const float* in, float* out, int numSamples)
         effect += (effectT - effect) * aW;
         inG += (inT - inG) * aK;
         outG += (outT - outG) * aK;
+        bias += (biasT - bias) * aK;
+        level += (levelT - level) * aK;
+        clock += (clockT - clock) * aK;
         updateRegenFilter();
+        updateLevelTrim();
 
         float s = in[n];
         if (! (s == s)) s = 0.0f;

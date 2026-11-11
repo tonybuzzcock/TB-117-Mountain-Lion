@@ -79,6 +79,7 @@ static std::vector<float> run (Flanger& a, const std::vector<float>& in)
 static void defaults (Flanger& a)
 {
     a.setManual (0.5); a.setWidth (0.5); a.setSpeed (0.5); a.setRegen (0.5); a.setEffectOn (true);
+    a.setBiasTrim (0.5); a.setLevelTrim (0.75); a.setClockTrim (0.5);
     a.setInputGainDb (0.0); a.setOutputGainDb (0.0);
 }
 
@@ -221,14 +222,14 @@ int main (int argc, char** argv)
         for (int i = 0; i < 20; ++i) x[200 + i] = (float) (0.3 * std::sin (kPiT * i / 20.0));
         std::vector<float> y = run (a, x);
         size_t dryAt = 0; double best = 0.0;
-        for (size_t i = 0; i < 600; ++i) if (std::fabs (y[i]) > best) { best = std::fabs (y[i]); dryAt = i; }
+        for (size_t i = 200; i < (size_t) (230 + lat); ++i) if (std::fabs (y[i]) > best) { best = std::fabs (y[i]); dryAt = i; }
         size_t wetAt = 0; double bw = 0.0;
         const size_t from = dryAt + (size_t) (0.0010 * kSr);
         for (size_t i = from; i < from + (size_t) (0.005 * kSr); ++i) if (std::fabs (y[i]) > bw) { bw = std::fabs (y[i]); wetAt = i; }
         const double ms = 1000.0 * (double) (wetAt - dryAt) / kSr, nominal = Flanger::delayMs (0.0, 0.0, 0.0);
         std::printf ("  MANUAL 0: wet copy %.2f ms after the dry (nominal %.2f), dry %.3f, wet %.3f\n", ms, nominal, best, bw);
         check (std::fabs (ms - nominal) < 0.25, "wet click lands at the BBD delay");
-        check (bw > 0.5 * best && bw < 1.2 * best, "wet copy about as loud as the dry");
+        check (bw > 0.5 * best && bw < 2.5 * best, "wet copy about as loud as the dry, or louder (LEVEL trim)");
         check (std::fabs (a.currentClockHz() - 512.0 / (nominal * 1.0e-3)) < 1.0, "clock: 512 periods for 1024 stages");
 
         defaults (a);
@@ -303,8 +304,8 @@ int main (int argc, char** argv)
             if (g < mn) { mn = g; fmn = f; }
         }
         std::printf ("  150 Hz - 3 kHz: peak %+.1f dB at %.0f Hz, notch %+.1f dB at %.0f Hz\n", mx, fmx, mn, fmn);
-        check (mx - mn > 15.0, "deep notches (dry and wet nearly equal through the mids)");
-        check (mx < 4.0 && mx > -3.0, "comb peaks near unity gain");
+        check (mx - mn > 12.0, "deep notches");
+        check (mx < 6.5 && mx > -3.0, "comb peaks a few dB up (wet a little hotter than dry)");
 
         const double ref = Flanger::wetFilterDb (100.0);
         double worst = 0.0;
@@ -342,15 +343,35 @@ int main (int argc, char** argv)
         }
         check (grows, "regeneration peaks rise with the knob");
 
-        still (a, 1.0, 0.0);
+        std::printf ("  loop gain (LEVEL trim default): %.2f at 2 o'clock, %.2f at 3, %.2f at 4, %.2f at 10\n",
+                     Flanger::regenLoopGain (0.7, 0.75), Flanger::regenLoopGain (0.8, 0.75),
+                     Flanger::regenLoopGain (0.9, 0.75), Flanger::regenLoopGain (1.0, 0.75));
+        check (Flanger::regenLoopGain (0.8, 0.75) > 0.8 && Flanger::regenLoopGain (0.8, 0.75) < 1.0,
+               "wild from 3 o'clock, still just below oscillation there");
+        check (Flanger::regenLoopGain (1.0, 0.75) > 1.05, "self-oscillates towards the top, like the pedal");
+        check (Flanger::regenLoopGain (1.0, 0.5) < 0.8, "LEVEL trim down tames it");
+
+        // Up to 2 o'clock the ringing still dies away once the input stops
+        still (a, 0.7, 0.0);
         a.setWidth (1.0);
         a.reset();
         std::vector<float> x = noise (0.3, 1.0, 7), z (3 * kSr, 0.0f);
         run (a, x);
         std::vector<float> y = run (a, z);
         const double tail = peakRange (y, 2 * kSr, 3 * kSr);
-        std::printf ("  REGEN 10, 2 s after the input stops: %.2g\n", tail);
-        check (tail < 1e-3, "rings down: the loop gain stays below 1");
+        std::printf ("  REGEN 7, 2 s after the input stops: %.2g\n", tail);
+        check (tail < 1e-3, "rings down below the edge");
+
+        // Full REGEN: it takes off on its own, held by the diode limiter
+        still (a, 1.0, 0.0);
+        a.setWidth (1.0);
+        a.reset();
+        run (a, x);
+        std::vector<float> y2 = run (a, z);
+        const double osc = rmsRange (y2, 2 * kSr, 3 * kSr), pk = peakRange (y2, 0, y2.size());
+        std::printf ("  REGEN 10, input stopped: still %.2f V rms, peak %.2f V\n", osc, pk);
+        check (osc > 0.05, "self-oscillation keeps going");
+        check (allFinite (y2, 8.0) && pk < 7.0, "and stays bounded (diodes, BBD clip, rails)");
     }
 
     std::printf ("\n6. Diode limiter and BBD\n");
@@ -380,6 +401,51 @@ int main (int argc, char** argv)
         a.reset();
         std::vector<float> h = sine (9000.0, 0.3, 0.5), yh = run (a, h);
         check (allFinite (yh, 4.0), "clean at a 9 kHz tone");
+    }
+
+    std::printf ("\n6b. PCB trims\n");
+    {
+        std::printf ("  CLOCK trim (MANUAL 0): %.2f ms at 0, %.2f centred, %.2f at 10\n",
+                     Flanger::delayMs (0, 0, 0, 0.0), Flanger::delayMs (0, 0, 0, 0.5), Flanger::delayMs (0, 0, 0, 1.0));
+        check (Flanger::delayMs (0, 0, 0, 0.0) > Flanger::delayMs (0, 0, 0, 1.0) + 0.3, "CLOCK trim shifts the delay range");
+
+        // LEVEL: the wet copy's level follows the trim
+        double wetAt[2];
+        for (int k = 0; k < 2; ++k)
+        {
+            still (a, 0.0, 0.0);
+            a.setLevelTrim (k == 0 ? 0.4 : 0.9);
+            a.reset();
+            std::vector<float> x ((size_t) (0.1 * kSr), 0.0f);
+            for (int i = 0; i < 20; ++i) x[200 + i] = (float) (0.3 * std::sin (kPiT * i / 20.0));
+            std::vector<float> y = run (a, x);
+            wetAt[k] = peakRange (y, 200 + lat + (size_t) (0.0022 * kSr), 200 + lat + (size_t) (0.0040 * kSr));
+        }
+        std::printf ("  LEVEL trim 4: wet %.3f, 9: wet %.3f\n", wetAt[0], wetAt[1]);
+        check (wetAt[1] > 1.8 * wetAt[0], "LEVEL trim sets the wet level");
+
+        // BIAS: off-centre, one side clips first (even harmonics)
+        double h2[2];
+        for (int k = 0; k < 2; ++k)
+        {
+            still (a, 0.0, 1.0);
+            a.setLevelTrim (0.75);
+            a.setBiasTrim (k == 0 ? 0.5 : 0.9);
+            a.reset();
+            const double f0 = 441.0;
+            std::vector<float> y = run (a, sine (f0, 1.0, 0.5));
+            double c1 = 0, s1 = 0, c2 = 0, s2 = 0;
+            for (size_t i = kSr / 4; i < y.size(); ++i)
+            {
+                const double ph = 2.0 * kPiT * f0 * i / kSr;
+                c1 += y[i] * std::cos (ph); s1 += y[i] * std::sin (ph);
+                c2 += y[i] * std::cos (2 * ph); s2 += y[i] * std::sin (2 * ph);
+            }
+            h2[k] = std::sqrt (c2 * c2 + s2 * s2) / std::sqrt (c1 * c1 + s1 * s1);
+        }
+        std::printf ("  2nd harmonic at 1 V: BIAS centred %.4f, BIAS 9 %.4f\n", h2[0], h2[1]);
+        check (h2[1] > 3.0 * h2[0], "BIAS off-centre clips one side first");
+        a.setBiasTrim (0.5); a.setLevelTrim (0.75); a.setClockTrim (0.5);
     }
 
     std::printf ("\n7. Stability sweep\n");
@@ -426,6 +492,9 @@ int main (int argc, char** argv)
             a.setWidth (0.5 + 0.5 * std::sin (2 * kPiT * 5 * t));
             a.setSpeed (0.5 + 0.5 * std::sin (2 * kPiT * 6 * t));
             a.setRegen (0.5 + 0.5 * std::sin (2 * kPiT * 7 * t));
+            a.setBiasTrim (0.5 + 0.5 * std::sin (2 * kPiT * 8 * t));
+            a.setLevelTrim (0.5 + 0.5 * std::sin (2 * kPiT * 10 * t));
+            a.setClockTrim (0.5 + 0.5 * std::sin (2 * kPiT * 11 * t));
             a.setEffectOn (std::sin (2 * kPiT * 4 * t) > 0.0);
             a.setInputGainDb (12.0 * std::sin (2 * kPiT * 2 * t));
             a.setOutputGainDb (12.0 * std::sin (2 * kPiT * 9 * t));
@@ -447,7 +516,8 @@ int main (int argc, char** argv)
         const R renders[] = {
             { "dry_chords",           0.5, 0.5, 0.5, 0.5, true },
             { "noon_chords",          0.5, 0.5, 0.5, 0.5, true },
-            { "slow_jet_chords",      0.3, 1.0, 0.25, 0.9, true },
+            { "slow_jet_chords",      0.3, 1.0, 0.25, 0.85, true },
+            { "screaming_regen_riff", 0.4, 0.7, 0.3, 0.95, false },
             { "fast_riff",            0.5, 0.6, 0.8, 0.4, false },
             { "manual_comb_riff",     0.2, 0.0, 0.5, 0.8, false },
         };

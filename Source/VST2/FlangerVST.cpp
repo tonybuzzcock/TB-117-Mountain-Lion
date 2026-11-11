@@ -2,7 +2,8 @@
 // VST 2.4 wrapper for TB 117 Flanger.
 //
 // - Parameters follow the pedal's front panel (Manual, Width, Speed, Regen.,
-//   the Effect footswitch), then the plugin-only Input and Output trims.
+//   the Effect footswitch), then the plugin-only Input and Output trims,
+//   then the three PCB trimpots (Bias, Level, Clock).
 // - Stereo in, stereo out: each side runs through its own copy of the
 //   circuit with the same settings and the LFOs in step. A mono source (both
 //   inputs identical) is processed once and the second copy kept in sync.
@@ -326,6 +327,9 @@ private:
                 case kEffect:    u.setEffectOn (on); break;
                 case kInput:     u.setInputGainDb ((v * 2.0 - 1.0) * kInputRangeDb); break;
                 case kOutput:    u.setOutputGainDb ((v * 2.0 - 1.0) * kOutputRangeDb); break;
+                case kBiasTrim:  u.setBiasTrim (v); break;
+                case kLevelTrim: u.setLevelTrim (v); break;
+                case kClockTrim: u.setClockTrim (v); break;
                 default: break;
             }
         }

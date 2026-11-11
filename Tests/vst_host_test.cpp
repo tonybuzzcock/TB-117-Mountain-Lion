@@ -86,7 +86,7 @@ int main (int argc, char** argv)
     std::printf ("\nIdentity\n");
     check (e->magic == kEffectMagic, "magic is 'VstP'");
     check (e->numInputs == 2 && e->numOutputs == 2, "stereo in/out");
-    check (e->numParams == tb117::kNumParams && tb117::kNumParams == 7, "7 parameters (5 panel + 2 plugin)");
+    check (e->numParams == tb117::kNumParams && tb117::kNumParams == 10, "10 parameters (5 panel + 2 plugin + 3 trims)");
     check ((e->flags & effFlagsCanReplacing) != 0, "processReplacing supported");
     check ((e->flags & effFlagsIsSynth) == 0, "not flagged as an instrument");
     check (e->initialDelay == tb117::Flanger::latencySamples(), "reports oversampler latency");
@@ -107,7 +107,7 @@ int main (int argc, char** argv)
     std::printf ("\nParameters\n");
     char expectSpeed[16];
     std::snprintf (expectSpeed, sizeof (expectSpeed), "%.2f", tb117::Flanger::lfoHz (0.5));
-    const char* expectDisp[7] = { "5.0", "5.0", expectSpeed, "5.0", "In", "+0.0", "+0.0" };
+    const char* expectDisp[10] = { "5.0", "5.0", expectSpeed, "5.0", "In", "+0.0", "+0.0", "5.0", "7.5", "5.0" };
     for (int i = 0; i < tb117::kNumParams; ++i)
     {
         char name[64] = { 0 }, disp[64] = { 0 }, label[64] = { 0 };
@@ -157,6 +157,7 @@ int main (int argc, char** argv)
     tb117::Flanger* refp = new tb117::Flanger();
     tb117::Flanger& ref = *refp;
     ref.setManual (0.5); ref.setWidth (0.5); ref.setSpeed (0.5); ref.setRegen (0.5); ref.setEffectOn (true);
+    ref.setBiasTrim (0.5); ref.setLevelTrim (0.75); ref.setClockTrim (0.5);
     ref.setInputGainDb (0.0); ref.setOutputGainDb (0.0);
     ref.prepare (sr);
     std::vector<float> refOut (sr);
@@ -215,13 +216,13 @@ int main (int argc, char** argv)
 
     // Silence in -> settles to silence out (no DC, no oscillation)
     {
-        e->setParameter (e, tb117::kRegen, 1.0f);
+        e->setParameter (e, tb117::kRegen, 0.7f);
         std::vector<float> z (sr * 4, 0.0f), oa (sr * 4), ob (sr * 4);
         std::vector<float> z2 (sr * 4, 0.0f);
         runBlocks (e, z, z2, oa, ob, 512);
         double tail = 0.0;
         for (int i = sr * 3; i < sr * 4; ++i) tail = std::max (tail, (double) std::fabs (oa[i]));
-        std::printf ("  residual after 3 s of silence (Regen 10): %.2g\n", tail);
+        std::printf ("  residual after 3 s of silence (Regen 7): %.2g\n", tail);
         e->setParameter (e, tb117::kRegen, 0.5f);
         check (tail < 1e-4, "silence settles to silence");
     }

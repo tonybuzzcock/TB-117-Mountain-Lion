@@ -17,6 +17,17 @@ The modern Mac version (CLAP / VST3 / AU) lives in `TB-117-2026-MAC`.
 | REGEN. | 50K lin from the filtered wet signal, 15n + 120K back into the BBD driver |
 | Footswitch | Effect in / bypass; the red LED lights with the effect in |
 | Input, Output | Plugin-only trims (±12 dB, ±24 dB) |
+| TRIMS (strip) | Drops the PCB down over the face with the board's three trimpots; click again to put it away |
+
+### PCB trimpots
+
+| Trim | In the circuit | What it does |
+|---|---|---|
+| BIAS (5K) | SAD1024 bias, through 100K to pins 2 and 15 | Centred = most headroom. Off-centre, one side of the waveform clips first: grittier, and the wet signal is squashed at the ends |
+| LEVEL (22K) | Pins 11 and 12 joined into the trim, wiper -> 0.1u -> 30K | The wet level, which also sets how hard REGEN can drive the loop. Default 7.5: REGEN gets wild from 3 o'clock and self-oscillates from about 4 o'clock. Lower = tamer, higher = wilder |
+| CLOCK (500K) | Wiper -> 470K into the clock's current mirror | Shifts the whole delay range (about 3.3 ms to 2.5 ms at MANUAL 0 across the trim) |
+
+The trims are saved with the session and in presets.
 
 Presets: 8 slots in `~/Library/Application Support/TB/TB 117 Flanger/Presets.txt`.
 
@@ -39,11 +50,14 @@ All are named constants in `Source/DSP/Flanger.cpp`:
 
 - **Clock per microamp** (`kDelayAmps`): set so MANUAL fully clockwise with WIDTH at 0 gives 0.5 ms.
   The real figure depends on the 62p ramp, the BC557 / BC547 latch threshold and the clock trim.
-- **Clock trim current** (`kItrim`, 15 µA, trim centred).
 - **LFO swing** (`kLfoLow` / `kLfoHigh`, 1.8 - 11.4 V). As drawn, the bias divider (15K / 10K, 6 V)
   puts the Schmitt trigger's lower threshold below the 4558's swing, which would stop the LFO; the
   swing is taken as the integrator's usable range on the 15 V supply.
-- **SAD1024** gain through both sections (0.8) and clipping level (2 V peak).
+- **SAD1024** gain from pin 2 to the joined outputs (`kBbdGain`, 2.1) and clipping level (2 V
+  peak). With the drawing's resistors and a unity-gain BBD the REGEN loop never gets past about 0.7,
+  yet real M117s scream and self-oscillate near the top of REGEN. The gain is set from the user's
+  pedal: wild from 3 o'clock, oscillating from about 4 o'clock with LEVEL at its default.
+- **BIAS trim span** (`kBiasSpan`, ±2 V at the ends of the trim).
 - The drawing shows **1M and 4.7µ** between WIDTH's wiper and the clock input. Taken literally that
   would smooth the sweep away (a 4.7 s time constant into the 22K input), so the wiper drives the
   clock directly. It is probably a supply or start-up filter drawn in the wrong place.

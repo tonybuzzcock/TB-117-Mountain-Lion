@@ -6,7 +6,9 @@
 // red LED, the chrome stomp switch, the user's TB electronic logo where the
 // maker's badge sits (with "electronic" in white on the grey) and "flanger" in
 // plain lettering. A strip of plugin controls runs along the bottom (Input,
-// Output, presets and the readout).
+// Output, the TRIMS button, presets and the readout). TRIMS drops a circuit
+// board down over the face with the PCB's three trimpots (BIAS, LEVEL, CLOCK);
+// click it again to put the board away.
 //
 // Cocoa, manual retain/release, and only APIs that exist in Mac OS X 10.8.5.
 // Everything is drawn in code; no image files.
@@ -27,7 +29,7 @@ using namespace tb117;
 namespace
 {
 
-enum CtlType { kCtlKnob, kCtlFootswitch, kCtlSmallKnob };
+enum CtlType { kCtlKnob, kCtlFootswitch, kCtlSmallKnob, kCtlTrim };
 
 struct Ctl
 {
@@ -54,13 +56,23 @@ const Ctl kCtls[] = {
     { kRegen,     kCtlKnob,       540, 114, 62, "REGEN.",  0, 0 },
     { kEffect,    kCtlFootswitch, 320, 355, 24, "EFFECT",  0, 0 },
     // Plugin strip
-    { kInput,     kCtlSmallKnob,   60, 534, 19, "INPUT",   "-12", "+12" },
-    { kOutput,    kCtlSmallKnob,  162, 534, 19, "OUTPUT",  "-24", "+24" },
+    { kInput,     kCtlSmallKnob,   46, 534, 19, "INPUT",   "-12", "+12" },
+    { kOutput,    kCtlSmallKnob,  132, 534, 19, "OUTPUT",  "-24", "+24" },
+    // PCB trimpots, where they sit with the board fully down
+    { kBiasTrim,  kCtlTrim,       164, 132, 22, "BIAS TRIM",  "BIAS",  "5K" },
+    { kLevelTrim, kCtlTrim,       320, 132, 22, "LEVEL TRIM", "LEVEL", "22K" },
+    { kClockTrim, kCtlTrim,       476, 132, 22, "CLOCK TRIM", "CLOCK", "500K" },
 };
+const char* const kTrimNotes[3] = { "SAD1024 headroom", "wet level / regen", "delay range" };
+
+// The drop-down board (fully down) and the button that drops it
+const NSRect kPcbRect = { { 24.0, 8.0 }, { 592.0, 240.0 } };
+const NSRect kTrimsRect = { { 184.0, 520.0 }, { 56.0, 26.0 } };
+const double kDropSeconds = 0.32;
 
 // Preset section in the strip: a SAVE button and slots 1..8, then the readout
-const NSRect kSaveRect = { { 236.0, 520.0 }, { 54.0, 26.0 } };
-const CGFloat kSlotX0 = 300.0, kSlotPitch = 41.0, kSlotW = 35.0, kSlotY = 520.0, kSlotH = 26.0;
+const NSRect kSaveRect = { { 250.0, 520.0 }, { 52.0, 26.0 } };
+const CGFloat kSlotX0 = 310.0, kSlotPitch = 39.0, kSlotW = 34.0, kSlotY = 520.0, kSlotH = 26.0;
 const CGFloat kPresetLabelY = 504.0;
 const NSRect kReadoutRect = { { 20.0, 570.0 }, { 600.0, 54.0 } };
 
@@ -141,6 +153,9 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
     bool presetUsed[kNumPresetSlots];
     char status[64];
     NSImage* flecks;      // the hammertone finish, made once
+    // Drop-down board: 0 = put away, 1 = fully down
+    double drop, dropFrom, dropTo, dropStart;
+    NSTimer* anim;
 }
 - (id) initWithFrame: (NSRect) frame host: (EditorHost*) h;
 - (void) shutdown;
@@ -161,6 +176,9 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
         activePreset = -1;
         status[0] = 0;
         flecks = nil;
+        drop = dropFrom = dropTo = 0.0;
+        dropStart = 0.0;
+        anim = nil;
         host->refreshPresets();
         for (int k = 0; k < kNumPresetSlots; ++k) presetUsed[k] = host->presetExists (k);
         timer = [[NSTimer timerWithTimeInterval: 1.0 / 20.0 target: self selector: @selector (tick:)
@@ -174,6 +192,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 - (void) shutdown
 {
     if (timer) { [timer invalidate]; [timer release]; timer = nil; }
+    if (anim) { [anim invalidate]; [anim release]; anim = nil; }
     if (flecks) { [flecks release]; flecks = nil; }
     host = 0;
 }
@@ -489,6 +508,228 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
     [dome stroke];
 }
 
+//------------------------------------------------------------------------------
+// Drop-down board
+
+- (void) toggleBoard
+{
+    dropFrom = drop;
+    dropTo = dropTo > 0.5 ? 0.0 : 1.0;
+    dropStart = [NSDate timeIntervalSinceReferenceDate];
+    if (! anim)
+    {
+        anim = [[NSTimer timerWithTimeInterval: 1.0 / 60.0 target: self selector: @selector (animate:)
+                                      userInfo: nil repeats: YES] retain];
+        [[NSRunLoop currentRunLoop] addTimer: anim forMode: NSDefaultRunLoopMode];
+        [[NSRunLoop currentRunLoop] addTimer: anim forMode: NSEventTrackingRunLoopMode];
+    }
+    [self setNeedsDisplay: YES];
+}
+
+- (void) animate: (NSTimer*) t
+{
+    (void) t;
+    double u = ([NSDate timeIntervalSinceReferenceDate] - dropStart) / (kDropSeconds * std::fabs (dropTo - dropFrom) + 1.0e-6);
+    if (u >= 1.0) u = 1.0;
+    const double e = u * u * (3.0 - 2.0 * u);            // ease in and out
+    drop = dropFrom + (dropTo - dropFrom) * e;
+    if (u >= 1.0)
+    {
+        drop = dropTo;
+        if (anim) { [anim invalidate]; [anim release]; anim = nil; }
+    }
+    [self setNeedsDisplay: YES];
+}
+
+// How far the board has come down (pixels to add to its fully-down position)
+- (CGFloat) boardOffset
+{
+    const CGFloat travel = NSMaxY (kPcbRect) + 12.0;
+    return (CGFloat) (-(1.0 - drop) * travel);
+}
+
+- (BOOL) boardFullyDown { return drop >= 0.999 && dropTo > 0.5; }
+
+- (NSRect) boardRect { return NSOffsetRect (kPcbRect, 0.0, [self boardOffset]); }
+
+// Small cermet trimmer: blue body, white slotted rotor
+- (void) drawTrimAt: (NSPoint) c size: (CGFloat) h value: (CGFloat) v
+{
+    const NSRect body = NSMakeRect (c.x - h, c.y - h, 2 * h, 2 * h);
+    [NSGraphicsContext saveGraphicsState];
+    NSShadow* sh = [[[NSShadow alloc] init] autorelease];
+    [sh setShadowOffset: NSMakeSize (1.5, -2.5)];
+    [sh setShadowBlurRadius: 3.0];
+    [sh setShadowColor: [NSColor colorWithCalibratedWhite: 0.0 alpha: 0.5]];
+    [sh set];
+    NSBezierPath* bp = [NSBezierPath bezierPathWithRoundedRect: body xRadius: 3 yRadius: 3];
+    [rgb (38, 84, 182) set];
+    [bp fill];
+    [NSGraphicsContext restoreGraphicsState];
+    NSGradient* bg = [[[NSGradient alloc] initWithStartingColor: rgb (82, 132, 226) endingColor: rgb (30, 66, 150)] autorelease];
+    [bg drawInBezierPath: bp angle: -60.0];
+    [rgb (18, 36, 86) set];
+    [bp setLineWidth: 1.0];
+    [bp stroke];
+
+    const CGFloat r = h * 0.68;
+    NSBezierPath* rot = [NSBezierPath bezierPathWithOvalInRect: NSMakeRect (c.x - r, c.y - r, 2 * r, 2 * r)];
+    NSGradient* rg = [[[NSGradient alloc] initWithStartingColor: rgb (252, 252, 248) endingColor: rgb (196, 196, 190)] autorelease];
+    [rg drawInBezierPath: rot relativeCenterPosition: NSMakePoint (-0.3, 0.4)];
+    [rgb (120, 120, 116) set];
+    [rot setLineWidth: 0.8];
+    [rot stroke];
+
+    // Screwdriver slot across the rotor, with the pointer end marked
+    const CGFloat a = valueAngle (v);
+    NSBezierPath* slot = [NSBezierPath bezierPath];
+    [slot moveToPoint: polar (c.x, c.y, r * 0.86, a)];
+    [slot lineToPoint: polar (c.x, c.y, r * 0.86, a + (CGFloat) M_PI)];
+    [slot setLineWidth: 3.2];
+    [rgb (70, 70, 68) set];
+    [slot stroke];
+    const NSPoint tip = polar (c.x, c.y, r * 0.62, a);
+    [rgb (210, 30, 26) set];
+    [[NSBezierPath bezierPathWithOvalInRect: NSMakeRect (tip.x - 2.2, tip.y - 2.2, 4.4, 4.4)] fill];
+}
+
+- (void) drawBoard
+{
+    if (drop <= 0.001) return;
+    const NSRect b = [self boardRect];
+    const CGFloat dy = [self boardOffset];
+
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip (NSMakeRect (0, 0, [self bounds].size.width, kStripTop));
+
+    // The board, with a shadow on the face beneath it
+    NSBezierPath* pcb = [NSBezierPath bezierPathWithRoundedRect: b xRadius: 6 yRadius: 6];
+    [NSGraphicsContext saveGraphicsState];
+    NSShadow* sh = [[[NSShadow alloc] init] autorelease];
+    [sh setShadowOffset: NSMakeSize (0.0, -8.0)];
+    [sh setShadowBlurRadius: 12.0];
+    [sh setShadowColor: [NSColor colorWithCalibratedWhite: 0.0 alpha: 0.7]];
+    [sh set];
+    [rgb (24, 82, 52) set];
+    [pcb fill];
+    [NSGraphicsContext restoreGraphicsState];
+    NSGradient* g = [[[NSGradient alloc] initWithStartingColor: rgb (40, 116, 74) endingColor: rgb (22, 78, 48)] autorelease];
+    [g drawInBezierPath: pcb angle: 90.0];
+
+    // Copper tracks under the solder mask
+    [NSGraphicsContext saveGraphicsState];
+    [pcb addClip];
+    NSColor* track = [NSColor colorWithCalibratedRed: 0.36 green: 0.66 blue: 0.42 alpha: 0.55];
+    [track set];
+    unsigned seed = 4013u;
+    for (int k = 0; k < 26; ++k)
+    {
+        seed = seed * 1664525u + 1013904223u; const CGFloat x = NSMinX (b) + 20 + (seed >> 8) / 16777216.0 * (b.size.width - 40);
+        seed = seed * 1664525u + 1013904223u; const CGFloat y = NSMinY (b) + 40 + (seed >> 8) / 16777216.0 * (b.size.height - 60);
+        seed = seed * 1664525u + 1013904223u; const CGFloat len = 30 + (seed >> 8) / 16777216.0 * 120;
+        seed = seed * 1664525u + 1013904223u; const bool across = (seed >> 20) & 1;
+        NSBezierPath* t = [NSBezierPath bezierPath];
+        [t moveToPoint: NSMakePoint (x, y)];
+        if (across) { [t lineToPoint: NSMakePoint (x + len, y)]; [t lineToPoint: NSMakePoint (x + len + 14, y + 14)]; }
+        else        { [t lineToPoint: NSMakePoint (x, y + len * 0.5)]; [t lineToPoint: NSMakePoint (x + 14, y + len * 0.5 + 14)]; }
+        [t setLineWidth: 2.2];
+        [t stroke];
+        const NSPoint e = [t currentPoint];
+        [[NSBezierPath bezierPathWithOvalInRect: NSMakeRect (e.x - 3.5, e.y - 3.5, 7, 7)] fill];
+    }
+    [NSGraphicsContext restoreGraphicsState];
+    [rgb (12, 46, 28) set];
+    [pcb setLineWidth: 1.2];
+    [pcb stroke];
+
+    // Mounting holes
+    const CGFloat hx[2] = { NSMinX (b) + 16, NSMaxX (b) - 16 };
+    const CGFloat hy[2] = { NSMinY (b) + 16, NSMaxY (b) - 16 };
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+        {
+            NSBezierPath* ring = [NSBezierPath bezierPathWithOvalInRect: NSMakeRect (hx[i] - 7, hy[j] - 7, 14, 14)];
+            [rgb (196, 190, 160) set];
+            [ring fill];
+            [rgb (34, 35, 37) set];
+            [[NSBezierPath bezierPathWithOvalInRect: NSMakeRect (hx[i] - 3.5, hy[j] - 3.5, 7, 7)] fill];
+        }
+
+    // Silkscreen
+    NSColor* silk = rgb (236, 238, 230);
+    drawText ("PCB TRIMS", boldFont (13.0), silk, NSMidX (b), NSMinY (b) + 24.0, 2.0);
+
+    // The chips the trims look after
+    const char* chips[3] = { "SAD1024", "4558", "4013" };
+    const CGFloat chipW[3] = { 110, 56, 84 };
+    for (int k = 0; k < 3; ++k)
+    {
+        const CGFloat cx = kCtls[kNumCtls - 3 + k].cx, cy = NSMinY (b) + 212.0;
+        const NSRect chip = NSMakeRect (cx - chipW[k] * 0.5, cy - 10, chipW[k], 20);
+        [rgb (186, 184, 170) set];
+        const int pins = (int) (chipW[k] / 14.0);
+        for (int pn = 0; pn < pins; ++pn)
+        {
+            const CGFloat px = NSMinX (chip) + 6 + pn * (chipW[k] - 12) / (pins - 1) - 2;
+            NSRectFill (NSMakeRect (px, NSMinY (chip) - 4, 4, 4));
+            NSRectFill (NSMakeRect (px, NSMaxY (chip), 4, 4));
+        }
+        NSBezierPath* cp = [NSBezierPath bezierPathWithRoundedRect: chip xRadius: 2 yRadius: 2];
+        [rgb (26, 26, 28) set];
+        [cp fill];
+        drawText (chips[k], boldFont (9.0), rgb (200, 200, 196), NSMidX (chip), NSMidY (chip), 0.5);
+    }
+
+    // Trimmers, each in a silkscreen outline with its name, value and job
+    for (int k = 0; k < 3; ++k)
+    {
+        const Ctl& c = kCtls[kNumCtls - 3 + k];
+        const NSPoint ctr = NSMakePoint (c.cx, c.cy + dy);
+        NSBezierPath* outline = [NSBezierPath bezierPathWithRect: NSMakeRect (ctr.x - c.r - 7, ctr.y - c.r - 7, 2 * c.r + 14, 2 * c.r + 14)];
+        [silk set];
+        [outline setLineWidth: 1.2];
+        [outline stroke];
+        drawText (c.posA, boldFont (14.0), silk, ctr.x, ctr.y - c.r - 22.0, 1.0);
+        [self drawTrimAt: ctr size: c.r value: shown[c.param]];
+        char val[16];
+        std::snprintf (val, sizeof (val), "%s   %.1f", c.posB, shown[c.param] * 10.0);
+        drawText (val, boldFont (11.0), silk, ctr.x, ctr.y + c.r + 20.0, 0.5);
+        drawText (kTrimNotes[k], plainFont (10.0), silk, ctr.x, ctr.y + c.r + 36.0);
+    }
+    [NSGraphicsContext restoreGraphicsState];
+}
+
+- (void) drawTrimsButton
+{
+    NSColor* ink = [NSColor blackColor];
+    const bool open = dropTo > 0.5;
+    drawText ("PCB", boldFont (10.0), ink, NSMidX (kTrimsRect), kPresetLabelY);
+    NSBezierPath* bp = [NSBezierPath bezierPathWithRoundedRect: kTrimsRect xRadius: 3 yRadius: 3];
+    if (open)
+    {
+        NSGradient* g = [[[NSGradient alloc] initWithStartingColor: rgb (60, 140, 92) endingColor: rgb (28, 92, 56)] autorelease];
+        [g drawInBezierPath: bp angle: -90.0];
+    }
+    else
+    {
+        NSGradient* g = [[[NSGradient alloc] initWithStartingColor: rgb (232, 234, 236) endingColor: rgb (160, 163, 167)] autorelease];
+        [g drawInBezierPath: bp angle: -90.0];
+    }
+    [rgb (40, 41, 43) set];
+    [bp setLineWidth: 1.0];
+    [bp stroke];
+    NSColor* tc = open ? [NSColor whiteColor] : ink;
+    drawText ("TRIMS", boldFont (10.5), tc, NSMidX (kTrimsRect) - 6.0, NSMidY (kTrimsRect));
+    // A small arrow: down to drop the board, up to put it away
+    const CGFloat ax = NSMaxX (kTrimsRect) - 9.0, ay = NSMidY (kTrimsRect);
+    NSBezierPath* arrow = [NSBezierPath bezierPath];
+    if (open) { [arrow moveToPoint: NSMakePoint (ax - 4, ay + 2.5)]; [arrow lineToPoint: NSMakePoint (ax + 4, ay + 2.5)]; [arrow lineToPoint: NSMakePoint (ax, ay - 3)]; }
+    else      { [arrow moveToPoint: NSMakePoint (ax - 4, ay - 2.5)]; [arrow lineToPoint: NSMakePoint (ax + 4, ay - 2.5)]; [arrow lineToPoint: NSMakePoint (ax, ay + 3)]; }
+    [arrow closePath];
+    [tc set];
+    [arrow fill];
+}
+
 - (void) drawReadout
 {
     const NSRect box = kReadoutRect;
@@ -587,6 +828,8 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
         }
     }
     [self drawLed];
+    [self drawBoard];
+    [self drawTrimsButton];
     [self drawPresets];
     [self drawReadout];
 }
@@ -596,9 +839,13 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 
 - (int) ctlAtPoint: (NSPoint) p
 {
+    // The board covers what's beneath it; its trims answer once it is fully down
+    const bool onBoard = drop > 0.001 && NSPointInRect (p, [self boardRect]);
     for (int i = 0; i < kNumCtls; ++i)
     {
         const Ctl& c = kCtls[i];
+        if ((c.type == kCtlTrim) != onBoard) continue;
+        if (c.type == kCtlTrim && ! [self boardFullyDown]) continue;
         {
             const CGFloat dx = p.x - c.cx, dy = p.y - c.cy;
             if (dx * dx + dy * dy < (c.r + 8) * (c.r + 8)) return i;
@@ -663,6 +910,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 {
     const NSPoint p = [self convertPoint: [e locationInWindow] fromView: nil];
     if (! host) return;
+    if (NSPointInRect (p, kTrimsRect)) { [self toggleBoard]; return; }
     if ([self presetClick: p]) return;
     const int i = [self ctlAtPoint: p];
     if (i < 0) return;
@@ -714,7 +962,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
     const int i = [self ctlAtPoint: p];
     if (i < 0 || ! host) return;
     const Ctl& c = kCtls[i];
-    if (c.type != kCtlKnob && c.type != kCtlSmallKnob) return;
+    if (c.type != kCtlKnob && c.type != kCtlSmallKnob && c.type != kCtlTrim) return;
     const CGFloat d = [e deltaY];
     if (d == 0.0) return;
     status[0] = 0;

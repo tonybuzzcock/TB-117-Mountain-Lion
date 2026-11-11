@@ -138,7 +138,7 @@ int main (int argc, char** argv)
     // Each knob answers where it is drawn
     {
         const int knobs[6] = { kManual, kWidth, kSpeed, kRegen, kInput, kOutput };
-        const CGFloat kx[6] = { 98, 247, 393, 540, 60, 162 };
+        const CGFloat kx[6] = { 98, 247, 393, 540, 46, 132 };
         const CGFloat ky[6] = { 114, 114, 114, 114, 534, 534 };
         bool all = true;
         for (int k = 0; k < 6; ++k)
@@ -165,20 +165,20 @@ int main (int argc, char** argv)
 
     // Strip knob turned up shows in the readout
     const float a0 = e->getParameter (e, kOutput);
-    mouse (win, panel, NSLeftMouseDown,    NSMakePoint (162, 534));
-    mouse (win, panel, NSLeftMouseDragged, NSMakePoint (162, 514));
-    mouse (win, panel, NSLeftMouseUp,      NSMakePoint (162, 514));
+    mouse (win, panel, NSLeftMouseDown,    NSMakePoint (132, 534));
+    mouse (win, panel, NSLeftMouseDragged, NSMakePoint (132, 514));
+    mouse (win, panel, NSLeftMouseUp,      NSMakePoint (132, 514));
     check (e->getParameter (e, kOutput) > a0 + 0.05f, "strip knobs turn");
     renderPNG (panel, dir + "/panel_readout.png");
     e->setParameter (e, kOutput, 0.5f);
 
     std::printf ("\nPresets\n");
-    #define SLOT(k) NSMakePoint (300.0 + (k) * 41.0 + 17.0, 533.0)
+    #define SLOT(k) NSMakePoint (310.0 + (k) * 39.0 + 17.0, 533.0)
     e->setParameter (e, kRegen, 0.3f);
     e->setParameter (e, kEffect, 0.0f);
     pump (0.1);
-    mouse (win, panel, NSLeftMouseDown, NSMakePoint (263, 533));    // SAVE
-    mouse (win, panel, NSLeftMouseUp,   NSMakePoint (263, 533));
+    mouse (win, panel, NSLeftMouseDown, NSMakePoint (276, 533));    // SAVE
+    mouse (win, panel, NSLeftMouseUp,   NSMakePoint (276, 533));
     mouse (win, panel, NSLeftMouseDown, SLOT (2));                   // slot 3
     mouse (win, panel, NSLeftMouseUp,   SLOT (2));
     FILE* pf = std::fopen (presetFile.c_str(), "r");
@@ -216,6 +216,66 @@ int main (int argc, char** argv)
     e->setParameter (e, kRegen, 0.92f);
     pump (1.0);
     renderPNG (panel, dir + "/panel_showcase.png");
+
+    std::printf ("\nPCB trims board\n");
+    {
+        // Click TRIMS: the board drops down over the face
+        mouse (win, panel, NSLeftMouseDown, NSMakePoint (212, 533));
+        mouse (win, panel, NSLeftMouseUp,   NSMakePoint (212, 533));
+        pump (0.12);
+        NSData* mid = renderPNG (panel, dir + "/panel_trims_dropping.png");
+        pump (0.6);
+        NSData* down = renderPNG (panel, dir + "/panel_trims.png");
+        check (! [mid isEqualToData: down], "the board animates down");
+
+        // LEVEL trim: drag up 40 px -> +0.2
+        e->setParameter (e, kLevelTrim, 0.5f);
+        pump (0.1);
+        mouse (win, panel, NSLeftMouseDown,    NSMakePoint (320, 132));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (320, 112));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (320, 92));
+        mouse (win, panel, NSLeftMouseUp,      NSMakePoint (320, 92));
+        const float lv = e->getParameter (e, kLevelTrim);
+        std::printf ("  LEVEL trim 0.50 -> %.2f\n", lv);
+        check (std::fabs (lv - 0.7f) < 0.02f, "trims turn with a drag");
+        // The others answer where they are drawn
+        const float b0 = e->getParameter (e, kBiasTrim), c0 = e->getParameter (e, kClockTrim);
+        mouse (win, panel, NSLeftMouseDown,    NSMakePoint (164, 132));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (164, 152));
+        mouse (win, panel, NSLeftMouseUp,      NSMakePoint (164, 152));
+        mouse (win, panel, NSLeftMouseDown,    NSMakePoint (476, 132));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (476, 152));
+        mouse (win, panel, NSLeftMouseUp,      NSMakePoint (476, 152));
+        check (e->getParameter (e, kBiasTrim) < b0 - 0.05f && e->getParameter (e, kClockTrim) < c0 - 0.05f,
+               "BIAS and CLOCK trims turn");
+        mouse (win, panel, NSLeftMouseDown, NSMakePoint (164, 132), 2);
+        mouse (win, panel, NSLeftMouseUp,   NSMakePoint (164, 132), 2);
+        check (std::fabs (e->getParameter (e, kBiasTrim) - kDefaults[kBiasTrim]) < 1e-6f, "double-click resets a trim");
+        e->setParameter (e, kClockTrim, kDefaults[kClockTrim]);
+        e->setParameter (e, kLevelTrim, 0.82f);
+
+        // While the board is down, the knob under it doesn't move
+        const float m0 = e->getParameter (e, kManual);
+        mouse (win, panel, NSLeftMouseDown,    NSMakePoint (98, 114));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (98, 74));
+        mouse (win, panel, NSLeftMouseUp,      NSMakePoint (98, 74));
+        check (e->getParameter (e, kManual) == m0, "the board covers the knobs beneath it");
+        pump (0.2);
+        renderPNG (panel, dir + "/panel_trims_set.png");
+
+        // Click TRIMS again: the board goes away and the knobs work again
+        mouse (win, panel, NSLeftMouseDown, NSMakePoint (212, 533));
+        mouse (win, panel, NSLeftMouseUp,   NSMakePoint (212, 533));
+        pump (0.6);
+        NSData* up = renderPNG (panel, dir + "/panel_trims_away.png");
+        check (! [up isEqualToData: down], "the board goes back up");
+        mouse (win, panel, NSLeftMouseDown,    NSMakePoint (98, 114));
+        mouse (win, panel, NSLeftMouseDragged, NSMakePoint (98, 94));
+        mouse (win, panel, NSLeftMouseUp,      NSMakePoint (98, 94));
+        check (e->getParameter (e, kManual) > m0 + 0.05f || m0 > 0.95f, "knobs answer again");
+        e->setParameter (e, kLevelTrim, kDefaults[kLevelTrim]);
+        e->setParameter (e, kManual, 0.62f);
+    }
 
     std::printf ("\nClose\n");
     call (e, effEditClose);
