@@ -138,7 +138,7 @@ int main (int argc, char** argv)
     // Each knob answers where it is drawn
     {
         const int knobs[6] = { kManual, kWidth, kSpeed, kRegen, kInput, kOutput };
-        const CGFloat kx[6] = { 98, 247, 393, 540, 46, 132 };
+        const CGFloat kx[6] = { 98, 247, 393, 540, 42, 140 };
         const CGFloat ky[6] = { 114, 114, 114, 114, 534, 534 };
         bool all = true;
         for (int k = 0; k < 6; ++k)
@@ -165,9 +165,9 @@ int main (int argc, char** argv)
 
     // Strip knob turned up shows in the readout
     const float a0 = e->getParameter (e, kOutput);
-    mouse (win, panel, NSLeftMouseDown,    NSMakePoint (132, 534));
-    mouse (win, panel, NSLeftMouseDragged, NSMakePoint (132, 514));
-    mouse (win, panel, NSLeftMouseUp,      NSMakePoint (132, 514));
+    mouse (win, panel, NSLeftMouseDown,    NSMakePoint (140, 534));
+    mouse (win, panel, NSLeftMouseDragged, NSMakePoint (140, 514));
+    mouse (win, panel, NSLeftMouseUp,      NSMakePoint (140, 514));
     check (e->getParameter (e, kOutput) > a0 + 0.05f, "strip knobs turn");
     renderPNG (panel, dir + "/panel_readout.png");
     e->setParameter (e, kOutput, 0.5f);

@@ -56,8 +56,8 @@ const Ctl kCtls[] = {
     { kRegen,     kCtlKnob,       540, 114, 62, "REGEN.",  0, 0 },
     { kEffect,    kCtlFootswitch, 320, 355, 24, "EFFECT",  0, 0 },
     // Plugin strip
-    { kInput,     kCtlSmallKnob,   46, 534, 19, "INPUT",   "-12", "+12" },
-    { kOutput,    kCtlSmallKnob,  132, 534, 19, "OUTPUT",  "-24", "+24" },
+    { kInput,     kCtlSmallKnob,   42, 534, 19, "INPUT",   "-12", "+12" },
+    { kOutput,    kCtlSmallKnob,  140, 534, 19, "OUTPUT",  "-24", "+24" },
     // PCB trimpots, where they sit with the board fully down
     { kBiasTrim,  kCtlTrim,       164, 132, 22, "BIAS TRIM",  "BIAS",  "5K" },
     { kLevelTrim, kCtlTrim,       320, 132, 22, "LEVEL TRIM", "LEVEL", "22K" },
