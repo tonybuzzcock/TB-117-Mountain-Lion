@@ -216,13 +216,13 @@ int main (int argc, char** argv)
 
     // Silence in -> settles to silence out (no DC, no oscillation)
     {
-        e->setParameter (e, tb117::kRegen, 0.7f);
+        e->setParameter (e, tb117::kRegen, 0.5f);
         std::vector<float> z (sr * 4, 0.0f), oa (sr * 4), ob (sr * 4);
         std::vector<float> z2 (sr * 4, 0.0f);
         runBlocks (e, z, z2, oa, ob, 512);
         double tail = 0.0;
         for (int i = sr * 3; i < sr * 4; ++i) tail = std::max (tail, (double) std::fabs (oa[i]));
-        std::printf ("  residual after 3 s of silence (Regen 7): %.2g\n", tail);
+        std::printf ("  residual after 3 s of silence (Regen 5): %.2g\n", tail);
         e->setParameter (e, tb117::kRegen, 0.5f);
         check (tail < 1e-4, "silence settles to silence");
     }

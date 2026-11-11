@@ -72,9 +72,8 @@ namespace
     // clipping level. The drawing's resistors alone keep the REGEN loop well
     // below 1, yet real M117s scream and self-oscillate near the top of
     // REGEN; the gain is set so that, with the LEVEL trim at its default,
-    // REGEN gets wild from about 3 o'clock and breaks into oscillation
-    // around 4 o'clock (as on the user's pedal). LEVEL then tames it or
-    // makes it wilder.
+    // the loop reaches 1.15 with REGEN full up (as on the user's pedal).
+    // LEVEL then tames it or makes it wilder.
     const double kBbdGain = 2.1;
     const double kBbdClip = 2.0;               // V peak at the input, BIAS centred
     const double kBiasSpan = 2.0;              // V of bias shift either side across the BIAS trim
@@ -96,6 +95,18 @@ namespace
         if (a <= knee) return v;
         const double c = knee + (kBbdClip - knee) * std::tanh ((a - knee) / (kBbdClip - knee));
         return v < 0.0 ? -c : c;
+    }
+
+    // REGEN's track as it behaves on the user's pedal: the regeneration
+    // climbs quickly through the first half, a steady ring at 2 o'clock, wild
+    // from 3 o'clock, and the same full-up strength. (The drawing says 50K lin;
+    // matched by ear to the hardware.) Wiper fraction for a rotation.
+    const double kRegenCurve = 1.76;
+    inline double regenTrack (double x)
+    {
+        if (x <= 0.0) return 0.0;
+        if (x >= 1.0) return 1.0;
+        return 1.0 - std::pow (1.0 - x, kRegenCurve);
     }
 
     inline double highpassFc (double r, double c) { return 1.0 / (2.0 * kPi * r * c); }
@@ -153,7 +164,7 @@ double Flanger::delayMs (double manualPot, double widthPot, double lfo, double c
 
 double Flanger::regenLoopGain (double regenPot, double levelTrim)
 {
-    const double x = clamp01 (regenPot), t = clamp01 (levelTrim);
+    const double x = regenTrack (clamp01 (regenPot)), t = clamp01 (levelTrim);
     const double drv = kRfDrv / (kRregIn + x * (1.0 - x) * kRegPot);           // wiper -> driver
     const double mfbGain = kMfbR2 / (kMfbRin + t * (1.0 - t) * kLevelPot);    // LEVEL wiper -> MFB
     return x * drv * kBbdGain * t * mfbGain;                                    // Sallen-Key: x1
@@ -281,8 +292,9 @@ void Flanger::updateRegenFilter()
     regenSet = reg;
     // Wiper: Thevenin x * V through x (1 - x) 50K, then 15n + 120K into the
     // virtual earth: current = x V s C / (s C (Rth + 120K) + 1)
-    const double rs = kRregIn + reg * (1.0 - reg) * kRegPot;
-    regNet.setAnalog (reg * kCregIn, 0.0, kCregIn * rs, 1.0, fsOs);
+    const double w = regenTrack (reg);
+    const double rs = kRregIn + w * (1.0 - w) * kRegPot;
+    regNet.setAnalog (w * kCregIn, 0.0, kCregIn * rs, 1.0, fsOs);
 }
 
 void Flanger::reset()

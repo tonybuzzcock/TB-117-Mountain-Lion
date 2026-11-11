@@ -343,23 +343,24 @@ int main (int argc, char** argv)
         }
         check (grows, "regeneration peaks rise with the knob");
 
-        std::printf ("  loop gain (LEVEL trim default): %.2f at 2 o'clock, %.2f at 3, %.2f at 4, %.2f at 10\n",
-                     Flanger::regenLoopGain (0.7, 0.75), Flanger::regenLoopGain (0.8, 0.75),
-                     Flanger::regenLoopGain (0.9, 0.75), Flanger::regenLoopGain (1.0, 0.75));
-        check (Flanger::regenLoopGain (0.8, 0.75) > 0.8 && Flanger::regenLoopGain (0.8, 0.75) < 1.0,
-               "wild from 3 o'clock, still just below oscillation there");
-        check (Flanger::regenLoopGain (1.0, 0.75) > 1.05, "self-oscillates towards the top, like the pedal");
+        std::printf ("  loop gain (LEVEL trim default): %.2f at noon, %.2f at 2 o'clock, %.2f at 3, %.2f at 10\n",
+                     Flanger::regenLoopGain (0.5, 0.75), Flanger::regenLoopGain (0.7, 0.75),
+                     Flanger::regenLoopGain (0.8, 0.75), Flanger::regenLoopGain (1.0, 0.75));
+        check (Flanger::regenLoopGain (0.7, 0.75) > 0.93 && Flanger::regenLoopGain (0.7, 0.75) < 1.0,
+               "2 o'clock: a steady ring, right at the edge (the user's favourite sound)");
+        check (Flanger::regenLoopGain (0.8, 0.75) > 1.0, "wild from 3 o'clock, like the pedal");
+        check (std::fabs (Flanger::regenLoopGain (1.0, 0.75) - 1.15) < 0.02, "full-up strength unchanged");
         check (Flanger::regenLoopGain (1.0, 0.5) < 0.8, "LEVEL trim down tames it");
 
-        // Up to 2 o'clock the ringing still dies away once the input stops
-        still (a, 0.7, 0.0);
+        // Below the edge the ringing still dies away once the input stops
+        still (a, 0.55, 0.0);
         a.setWidth (1.0);
         a.reset();
         std::vector<float> x = noise (0.3, 1.0, 7), z (3 * kSr, 0.0f);
         run (a, x);
         std::vector<float> y = run (a, z);
         const double tail = peakRange (y, 2 * kSr, 3 * kSr);
-        std::printf ("  REGEN 7, 2 s after the input stops: %.2g\n", tail);
+        std::printf ("  REGEN 5.5, 2 s after the input stops: %.2g\n", tail);
         check (tail < 1e-3, "rings down below the edge");
 
         // Full REGEN: it takes off on its own, held by the diode limiter

@@ -14,7 +14,7 @@ The modern Mac version (CLAP / VST3 / AU) lives in `TB-117-2026-MAC`.
 | MANUAL | 50K lin across the supply, buffered (100K / 470K): sets the BBD clock with WIDTH at 0 (about 2.8 ms fully anticlockwise to 0.5 ms clockwise) |
 | WIDTH | 50K lin from the MANUAL voltage to the LFO triangle; its wiper drives the clock (wiper loading included). At 10 the LFO alone sets the delay, about 0.6 - 4.3 ms |
 | SPEED | SWEEP 500K log + 4K7 into the 15u + 15u integrator: about 0.08 Hz to 8.9 Hz |
-| REGEN. | 50K lin from the filtered wet signal, 15n + 120K back into the BBD driver |
+| REGEN. | 50K from the filtered wet signal, 15n + 120K back into the BBD driver. Its travel is matched to the user's pedal: a steady ring right at the edge at 2 o'clock, wild from 3 o'clock |
 | Footswitch | Effect in / bypass; the red LED lights with the effect in |
 | Input, Output | Plugin-only trims (±12 dB, ±24 dB) |
 | TRIMS (strip) | Drops the PCB down over the face with the board's three trimpots; click again to put it away |
@@ -24,7 +24,7 @@ The modern Mac version (CLAP / VST3 / AU) lives in `TB-117-2026-MAC`.
 | Trim | In the circuit | What it does |
 |---|---|---|
 | BIAS (5K) | SAD1024 bias, through 100K to pins 2 and 15 | Centred = most headroom. Off-centre, one side of the waveform clips first: grittier, and the wet signal is squashed at the ends |
-| LEVEL (22K) | Pins 11 and 12 joined into the trim, wiper -> 0.1u -> 30K | The wet level, which also sets how hard REGEN can drive the loop. Default 7.5: REGEN gets wild from 3 o'clock and self-oscillates from about 4 o'clock. Lower = tamer, higher = wilder |
+| LEVEL (22K) | Pins 11 and 12 joined into the trim, wiper -> 0.1u -> 30K | The wet level, which also sets how hard REGEN can drive the loop. Default 7.5: REGEN rings at the edge at 2 o'clock and takes off from 3 o'clock. Lower = tamer, higher = wilder |
 | CLOCK (500K) | Wiper -> 470K into the clock's current mirror | Shifts the whole delay range (about 3.3 ms to 2.5 ms at MANUAL 0 across the trim) |
 
 The trims are saved with the session and in presets.
@@ -56,7 +56,10 @@ All are named constants in `Source/DSP/Flanger.cpp`:
 - **SAD1024** gain from pin 2 to the joined outputs (`kBbdGain`, 2.1) and clipping level (2 V
   peak). With the drawing's resistors and a unity-gain BBD the REGEN loop never gets past about 0.7,
   yet real M117s scream and self-oscillate near the top of REGEN. The gain is set from the user's
-  pedal: wild from 3 o'clock, oscillating from about 4 o'clock with LEVEL at its default.
+  pedal: with LEVEL at its default the loop reaches 1.15 with REGEN full up.
+- **REGEN's travel** (`kRegenCurve`): the drawing says 50K lin, but on the user's pedal the
+  regeneration climbs faster (a steady ring at 2 o'clock with MANUAL, WIDTH and SPEED at 0, wild
+  from 3 o'clock), so the knob follows a reverse-log-like curve matched by ear.
 - **BIAS trim span** (`kBiasSpan`, ±2 V at the ends of the trim).
 - The drawing shows **1M and 4.7µ** between WIDTH's wiper and the clock input. Taken literally that
   would smooth the sweep away (a 4.7 s time constant into the 22K input), so the wiper drives the
