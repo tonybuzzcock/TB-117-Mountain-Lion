@@ -140,7 +140,21 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 } // namespace
 
 //==============================================================================
-@interface TB117FlangerPanelView : NSView
+// Font size for one line in the readout: the usual size, or smaller so the
+// whole text fits (a 40-character preset name never needs scrolling)
+static CGFloat fitFontSize (const char* s, CGFloat size, CGFloat maxW)
+{
+    if (! s || ! *s) return size;
+    NSString* str = [NSString stringWithUTF8String: s];
+    if (! str) return size;
+    NSDictionary* a = [NSDictionary dictionaryWithObject: boldFont (size) forKey: NSFontAttributeName];
+    const CGFloat w = [str sizeWithAttributes: a].width;
+    if (w <= maxW || w <= 0.0) return size;
+    const CGFloat f = size * maxW / w;
+    return f < 7.0 ? 7.0 : f;
+}
+
+@interface TB117FlangerPanelView : NSView <NSTextFieldDelegate>
 {
     EditorHost* host;
     float shown[kNumParams];
@@ -151,7 +165,10 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
     bool saveMode;
     int activePreset;
     bool presetUsed[kNumPresetSlots];
-    char status[64];
+    char status[96];
+    NSTextField* nameField;   // naming a preset, over the readout
+    NSTextField* retiredField;// a finished one, taken away once its own event is over
+    int namingSlot;
     NSImage* flecks;      // the hammertone finish, made once
     // Drop-down board: 0 = put away, 1 = fully down
     double drop, dropFrom, dropTo, dropStart;
@@ -175,6 +192,9 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
         saveMode = false;
         activePreset = -1;
         status[0] = 0;
+        nameField = nil;
+        retiredField = nil;
+        namingSlot = -1;
         flecks = nil;
         drop = dropFrom = dropTo = 0.0;
         dropStart = 0.0;
@@ -191,6 +211,17 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 
 - (void) shutdown
 {
+    [NSObject cancelPreviousPerformRequestsWithTarget: self];
+    namingSlot = -1;
+    [self dropRetired];
+    if (nameField)
+    {
+        [nameField setDelegate: nil];
+        [nameField setTarget: nil];
+        [nameField removeFromSuperview];
+        [nameField release];
+        nameField = nil;
+    }
     if (timer) { [timer invalidate]; [timer release]; timer = nil; }
     if (anim) { [anim invalidate]; [anim release]; anim = nil; }
     if (flecks) { [flecks release]; flecks = nil; }
@@ -743,7 +774,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 
     if (status[0])
     {
-        drawText (status, boldFont (16.0), [NSColor blackColor], NSMidX (box), NSMidY (box));
+        drawText (status, boldFont (fitFontSize (status, 16.0, NSWidth (kReadoutRect) - 16.0)), [NSColor blackColor], NSMidX (box), NSMidY (box));
     }
     else if (readoutParam >= 0 && host)
     {
@@ -756,7 +787,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
         const int kind = kParamKind[readoutParam];
         const char* unit = kind == kRateHz ? " Hz" : ((kind == kDb12 || kind == kDb24) ? " dB" : "");
         std::snprintf (text, sizeof (text), "%s   %s%s", name ? name : "", disp, unit);
-        drawText (text, boldFont (16.0), [NSColor blackColor], NSMidX (box), NSMidY (box));
+        drawText (text, boldFont (fitFontSize (text, 16.0, NSWidth (kReadoutRect) - 16.0)), [NSColor blackColor], NSMidX (box), NSMidY (box));
     }
 }
 
@@ -866,6 +897,123 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
 }
 
 // SAVE button and preset slots. Returns YES if the click was handled here.
+//------------------------------------------------------------------------------
+// Preset names: after a save, or a click on the readout while a preset is in
+// use, the readout becomes a text box. Return keeps the name, Esc leaves the
+// old one, a click elsewhere keeps what was typed. The text shrinks to fit.
+
+- (void) showPreset: (int) slot verb: (const char*) verb
+{
+    char name[kMaxPresetName + 8] = { 0 };
+    if (host) host->presetName (slot, name, (int) sizeof (name));
+    if (name[0]) std::snprintf (status, sizeof (status), "%d   %s", slot + 1, name);
+    else         std::snprintf (status, sizeof (status), "PRESET %d %s", slot + 1, verb);
+    [self setNeedsDisplay: YES];
+}
+
+- (void) dropRetired
+{
+    if (! retiredField) return;
+    [retiredField setDelegate: nil];
+    [retiredField setTarget: nil];
+    [retiredField removeFromSuperview];
+    [retiredField release];
+    retiredField = nil;
+    if (! nameField && [self window]) [[self window] makeFirstResponder: self];
+    [self setNeedsDisplay: YES];
+}
+
+// Size the name box's font so everything typed (or the hint) fits
+- (void) fitNameField
+{
+    if (! nameField) return;
+    const CGFloat maxW = NSWidth ([nameField frame]) - 10.0;
+    NSString* s = [nameField stringValue];
+    if ([s length] == 0) s = [[nameField cell] placeholderString];
+    const char* u = s ? [s UTF8String] : "";
+    [nameField setFont: boldFont (fitFontSize (u, 16.0, maxW))];
+}
+
+- (void) startNaming: (int) slot
+{
+    if (! host || slot < 0) return;
+    if (nameField) [self finishNaming: YES];
+    namingSlot = slot;
+    char name[kMaxPresetName + 8] = { 0 };
+    host->presetName (slot, name, (int) sizeof (name));
+
+    const CGFloat fh = (CGFloat) (16.0 * 1.35 + 4.0);
+    const NSRect r = kReadoutRect;
+    nameField = [[NSTextField alloc] initWithFrame: NSMakeRect (NSMinX (r) + 6.0, NSMidY (r) - fh * 0.5,
+                                                                 NSWidth (r) - 12.0, fh)];
+    [nameField setBezeled: NO];
+    [nameField setBordered: NO];
+    [nameField setDrawsBackground: YES];
+    [nameField setBackgroundColor: rgb (190, 248, 100)];
+    [nameField setTextColor: [NSColor blackColor]];
+    [nameField setAlignment: NSCenterTextAlignment];
+    [nameField setFocusRingType: NSFocusRingTypeNone];
+    [nameField setStringValue: [NSString stringWithUTF8String: name]];
+    char hint[64];
+    std::snprintf (hint, sizeof (hint), "NAME PRESET %d, THEN RETURN", slot + 1);
+    [[nameField cell] setPlaceholderString: [NSString stringWithUTF8String: hint]];
+    [[nameField cell] setScrollable: YES];
+    [nameField setTarget: self];
+    [nameField setAction: @selector (nameEntered:)];
+    [nameField setDelegate: self];
+    [self fitNameField];
+    [self addSubview: nameField];
+    status[0] = 0;
+    readoutParam = -1;
+    [[self window] makeFirstResponder: nameField];
+    [self setNeedsDisplay: YES];
+}
+
+- (void) finishNaming: (BOOL) keep
+{
+    const int slot = namingSlot;
+    if (slot < 0) return;
+    namingSlot = -1;                       // only once (Return, then end of editing)
+    if (keep && host && nameField)
+    {
+        const char* utf8 = [[nameField stringValue] UTF8String];
+        host->renamePreset (slot, utf8 ? utf8 : "");
+    }
+    [self showPreset: slot verb: "SAVED"];
+    // the field may be in the middle of sending its action: take it away afterwards
+    [self dropRetired];
+    retiredField = nameField;
+    nameField = nil;
+    [retiredField setDelegate: nil];
+    [retiredField setTarget: nil];
+    [self performSelector: @selector (dropRetired) withObject: nil afterDelay: 0.0];
+}
+
+- (void) nameEntered: (id) sender
+{
+    (void) sender;
+    [self finishNaming: YES];
+}
+
+- (void) controlTextDidChange: (NSNotification*) n
+{
+    (void) n;
+    [self fitNameField];
+}
+
+- (void) controlTextDidEndEditing: (NSNotification*) n
+{
+    (void) n;
+    [self finishNaming: YES];
+}
+
+- (BOOL) control: (NSControl*) c textView: (NSTextView*) tv doCommandBySelector: (SEL) sel
+{
+    (void) c; (void) tv;
+    if (sel == @selector (cancelOperation:)) { [self finishNaming: NO]; return YES; }
+    return NO;
+}
+
 - (BOOL) presetClick: (NSPoint) p
 {
     if (NSPointInRect (p, kSaveRect))
@@ -884,8 +1032,15 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
             saveMode = false;
             host->refreshPresets();
             for (int j = 0; j < kNumPresetSlots; ++j) presetUsed[j] = host->presetExists (j);
-            if (ok) activePreset = k;
-            std::snprintf (status, sizeof (status), ok ? "PRESET %d SAVED" : "COULD NOT SAVE PRESET %d", k + 1);
+            if (ok)
+            {
+                activePreset = k;
+                std::snprintf (status, sizeof (status), "PRESET %d SAVED", k + 1);
+                [self setNeedsDisplay: YES];
+                [self startNaming: k];
+                return YES;
+            }
+            std::snprintf (status, sizeof (status), "COULD NOT SAVE PRESET %d", k + 1);
         }
         else
         {
@@ -895,7 +1050,7 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
             {
                 for (int j = 0; j < kNumParams; ++j) shown[j] = host->getParam (j);
                 activePreset = k;
-                std::snprintf (status, sizeof (status), "PRESET %d LOADED", k + 1);
+                [self showPreset: k verb: "LOADED"];
             }
             else
                 std::snprintf (status, sizeof (status), "PRESET %d IS EMPTY", k + 1);
@@ -911,6 +1066,12 @@ void drawTextTurned (const char* s, NSFont* font, NSColor* color, CGFloat cx, CG
     const NSPoint p = [self convertPoint: [e locationInWindow] fromView: nil];
     if (! host) return;
     if (NSPointInRect (p, kTrimsRect)) { [self toggleBoard]; return; }
+    if (nameField) [self finishNaming: YES];
+    if (NSPointInRect (p, kReadoutRect) && activePreset >= 0)
+    {
+        [self startNaming: activePreset];
+        return;
+    }
     if ([self presetClick: p]) return;
     const int i = [self ctlAtPoint: p];
     if (i < 0) return;
